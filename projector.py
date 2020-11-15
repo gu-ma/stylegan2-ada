@@ -202,49 +202,62 @@ class Projector:
 
 #----------------------------------------------------------------------------
 
-def project(network_pkl: str, target_fname: str, outdir: str, save_video: bool, seed: int):
+def project(network_pkl: str, target_path: str, outdir: str, save_video: bool, seed: int):
     # Load networks.
     tflib.init_tf({'rnd.np_random_seed': seed})
     print('Loading networks from "%s"...' % network_pkl)
     with dnnlib.util.open_url(network_pkl) as fp:
         _G, _D, Gs = pickle.load(fp)
 
-    # Load target image.
-    target_pil = PIL.Image.open(target_fname)
-    w, h = target_pil.size
-    s = min(w, h)
-    target_pil = target_pil.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
-    target_pil= target_pil.convert('RGB')
-    target_pil = target_pil.resize((Gs.output_shape[3], Gs.output_shape[2]), PIL.Image.ANTIALIAS)
-    target_uint8 = np.array(target_pil, dtype=np.uint8)
-    target_float = target_uint8.astype(np.float32).transpose([2, 0, 1]) * (2 / 255) - 1
+    target_fnames = os.listdir(target_path)
+    target_fnames.sort()
 
-    # Initialize projector.
-    proj = Projector()
-    proj.set_network(Gs)
-    proj.start([target_float])
+    for target_fname in target_fnames:
 
-    # Setup output directory.
-    os.makedirs(outdir, exist_ok=True)
-    target_pil.save(f'{outdir}/target.png')
-    writer = None
-    if save_video:
-        writer = imageio.get_writer(f'{outdir}/proj.mp4', mode='I', fps=60, codec='libx264', bitrate='16M')
+        if 'jpg'or 'png' in target_fname.split('.')[-1]:
 
-    # Run projector.
-    with tqdm.trange(proj.num_steps) as t:
-        for step in t:
-            assert step == proj.cur_step
-            if writer is not None:
-                writer.append_data(np.concatenate([target_uint8, proj.images_uint8[0]], axis=1))
-            dist, loss = proj.step()
-            t.set_postfix(dist=f'{dist[0]:.4f}', loss=f'{loss:.2f}')
+            basename = target_fname.split('.')[0]
 
-    # Save results.
-    PIL.Image.fromarray(proj.images_uint8[0], 'RGB').save(f'{outdir}/proj.png')
-    np.savez(f'{outdir}/dlatents.npz', dlatents=proj.dlatents)
-    if writer is not None:
-        writer.close()
+            if not os.path.isfile(f'{outdir}/dlatents_{basename}.npz'):
+
+                # Load target image.
+                fp = os.path.join(target_path, target_fname)
+                print(f'\nLoading {fp}')
+                target_pil = PIL.Image.open(fp)
+                w, h = target_pil.size
+                s = min(w, h)
+                target_pil = target_pil.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
+                target_pil= target_pil.convert('RGB')
+                target_pil = target_pil.resize((Gs.output_shape[3], Gs.output_shape[2]), PIL.Image.ANTIALIAS)
+                target_uint8 = np.array(target_pil, dtype=np.uint8)
+                target_float = target_uint8.astype(np.float32).transpose([2, 0, 1]) * (2 / 255) - 1
+
+                # Initialize projector.
+                proj = Projector()
+                proj.set_network(Gs)
+                proj.start([target_float])
+
+                # Setup output directory.
+                os.makedirs(outdir, exist_ok=True)
+                target_pil.save(f'{outdir}/target_{basename}.png')
+                writer = None
+                if save_video:
+                    writer = imageio.get_writer(f'{outdir}/proj_{basename}.mp4', mode='I', fps=60, codec='libx264', bitrate='16M')
+
+                # Run projector.
+                with tqdm.trange(proj.num_steps) as t:
+                    for step in t:
+                        assert step == proj.cur_step
+                        if writer is not None:
+                            writer.append_data(np.concatenate([target_uint8, proj.images_uint8[0]], axis=1))
+                        dist, loss = proj.step()
+                        t.set_postfix(dist=f'{dist[0]:.4f}', loss=f'{loss:.2f}')
+
+                # Save results.
+                PIL.Image.fromarray(proj.images_uint8[0], 'RGB').save(f'{outdir}/proj_{basename}.png')
+                np.savez(f'{outdir}/dlatents_{basename}.npz', dlatents=proj.dlatents)
+                if writer is not None:
+                    writer.close()
 
 #----------------------------------------------------------------------------
 
@@ -275,7 +288,7 @@ def main():
     )
 
     parser.add_argument('--network',     help='Network pickle filename', dest='network_pkl', required=True)
-    parser.add_argument('--target',      help='Target image file to project to', dest='target_fname', required=True)
+    parser.add_argument('--target',      help='Target directory of images to project to', dest='target_path', required=True)
     parser.add_argument('--save-video',  help='Save an mp4 video of optimization progress (default: true)', type=_str_to_bool, default=True)
     parser.add_argument('--seed',        help='Random seed', type=int, default=303)
     parser.add_argument('--outdir',      help='Where to save the output images', required=True, metavar='DIR')
